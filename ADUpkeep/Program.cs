@@ -22,51 +22,70 @@ namespace ADUpkeep
 
 
     public const int app_id = 20008;
+    public const string error_email_to = "helpdesk@claycountygov.com";    
 
     static void Main(string[] args)
     {
+      if (DateTime.Now.DayOfWeek == DayOfWeek.Saturday || DateTime.Now.DayOfWeek == DayOfWeek.Sunday) return;
+
       var ad_issue = new StringBuilder();
+      
       var telestaff_employees = telestaff_employee.Get();
+      var ad_accounts = ad_account.GetAllEmployees(telestaff_employees);
       var finplus_employees = finplus_employee.GetEmployees();
       var termed_pubworks_employees = finplus_employee.GetActivePubWorksEmployeesThatAreTermed();
-      //var termed_employees = finplus_employee.GetTermedEmployees(all_employees);
-      
-      var ad_accounts = new Dictionary<int, ad_account>();
-      ad_issue.AppendLine(PrintTermedPubworksEmployees(termed_pubworks_employees));
-      ad_issue.AppendLine(CheckFinplusInfo(ad_accounts, finplus_employees));
-      ad_issue.AppendLine(CheckTelestaffInfo(ad_accounts, telestaff_employees));
-      // save it to a temp file
-      if(ad_issue.Length > 0)
+
+      ad_issue.AppendLine(LookForNewEmployees(ad_accounts, finplus_employees));
+
+      if(DateTime.Now.DayOfWeek == DayOfWeek.Thursday)
       {
-        File.WriteAllText("C:\\Temp\\AD-Test3.txt", ad_issue.ToString());
+        EmailPubWorksCheck(PrintTermedPubworksEmployees(termed_pubworks_employees));
+        ad_issue.AppendLine(LookForTerminatedEmployeesWithActiveADAccounts(ad_accounts, finplus_employees));
+        ad_issue.AppendLine(CheckTelestaffInfo(ad_accounts, telestaff_employees));
       }
+      EmailADCheck(ad_issue.ToString());
+
+      ////// save it to a temp file
+      //if(ad_issue.Length > 0)
+      //{
+      //  File.WriteAllText("C:\\Temp\\AD-Test 2019-04-15.txt", ad_issue.ToString());
+      //}
     }
 
-    static string CheckFinplusInfo(Dictionary<int, ad_account> ad_accounts, Dictionary<int, finplus_employee> finplus_employees)
+    static string LookForNewEmployees(Dictionary<int, ad_account> ad_accounts, Dictionary<int, finplus_employee> finplus_employees)
     {
       var ad_issue = new StringBuilder();
 
       foreach (int id in finplus_employees.Keys)
       {
-        ad_accounts[id] = ad_account.FindByEmployeeId(id);
         // let's check some stuff
         if (!finplus_employees[id].is_terminated)
         {
           // if the user isn't terminated in finplus, let's look to make sure we were able to find
           // an AD account for them.
-          if (!ad_accounts[id].found)
+          if (!ad_accounts.ContainsKey(id) || (ad_accounts.ContainsKey(id) && !ad_accounts[id].active))
           {
             ad_issue.Append(finplus_employees[id].id.ToString())
               .Append(" - ")
               .Append(finplus_employees[id].name)
               .Append(" - ")
-              .AppendLine("No AD account found for that employeeID.");
+              .AppendLine("No active AD account found for that employee.");
           }
         }
-        else
+      }
+      return ad_issue.ToString();
+    }
+
+    static string LookForTerminatedEmployeesWithActiveADAccounts(Dictionary<int, ad_account> ad_accounts, Dictionary<int, finplus_employee> finplus_employees)
+    {
+      var ad_issue = new StringBuilder();
+
+      foreach (int id in finplus_employees.Keys)
+      {
+        // if the user is terminated in finplus, their AD account should be inactive too.
+        if (finplus_employees[id].is_terminated)
         {
-          // they are terminated
-          if (ad_accounts[id].active)
+          if (ad_accounts.ContainsKey(id) && ad_accounts[id].active)
           {
             ad_issue.Append(finplus_employees[id].id.ToString())
               .Append(" - ")
@@ -91,7 +110,6 @@ namespace ADUpkeep
       // and compare titles to access
       foreach(int id in telestaff_employees.Keys)
       {
-
         try
         {
           if (!ad_accounts.ContainsKey(id) || !ad_accounts[id].found)
@@ -187,6 +205,22 @@ namespace ADUpkeep
       return sb.ToString();
     }
 
+    static void EmailPubWorksCheck(string email_message)
+    {
+      if (email_message.Length == 0) return;
+      ErrorLog.SaveEmail(error_email_to,
+                         "Active Pub Works Accounts for terminated Employees",
+                         email_message);
+    }
+
+    static void EmailADCheck(string email_message)
+    {
+      if (email_message.Length == 0) return;
+      ErrorLog.SaveEmail(error_email_to,
+                         "AD Account issues found",
+                         email_message);
+    }
+    
     #region  Data Code 
 
     public static List<T> Get_Data<T>(string query, CS_Type cs)
